@@ -1,0 +1,411 @@
+{
+  "name": "03_Opportunity_Detection",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "trigger-campaign",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "abe386a3-22e6-4a1a-b1d5-6cc96dc633c6",
+      "name": "Webhook",
+      "webhookId": "56b0eba1-c92e-4163-99b2-1e369c38c3bf"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nSELECT \n  id,\n  user_id,\n  recommended_feature,\n  reasoning,\n  ai_score,\n  created_at,\n  email\nFROM upsell_opportunities \n-- WHERE status = 'ready_for_campaign'\n--   AND created_at >= NOW() - INTERVAL '4 hours'\nORDER BY ai_score DESC\nLIMIT 5;\n\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        208,
+        0
+      ],
+      "id": "acbcecdc-fb50-4765-a936-1c2f35dbda88",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "wLmBYCnBAUkuxtuo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Create personalized campaign message for:\n\nUser: {{ $json.user_id }}\nFeature: {{ $json.recommended_feature }}\nProblem: {{ $json.reasoning }}\nAI Confidence: {{ $json.ai_score }}\nemail: {{$json.email}}%\n\nMake it feel helpful and specific to their workflow challenge.\n\nout pure json format ",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "56b60f4e-3849-462c-8eb3-2d524287f987",
+      "name": "AI Agent",
+      "notes": "You are a SaaS marketing expert creating personalized campaign messages.\n\nCreate helpful, consultative messages that feel like suggestions from a helpful colleague, NOT sales pitches.\n\nReturn ONLY valid JSON in this format:\n{\n  \"subject_line\": \"helpful subject line (max 50 chars)\",\n  \"email_message\": \"personalized 80-word email message\",\n  \"in_app_notification\": \"short 30-word in-app message\",\n  \"cta_text\": \"specific action button text\"\n}\n\nMake messages specific to user's workflow challenge. Be helpful, not sales-y.\n\n\nactual user data add \n\n"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        496,
+        208
+      ],
+      "id": "68b4fe21-a5c8-424e-ba6a-a1fc0ada270f",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "d0erYHXBGLDNJQZn",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  let messageOutput = item.json.output || '';\n  \n  // Remove markdown fences if present\n  if (messageOutput.includes('```json')) {\n    messageOutput = messageOutput\n      .replace(/```json\\n?/g, '')\n      .replace(/```\\n?/g, '');\n  }\n\n  // Default values\n  let user_id = 'demo_user';\n  let feature = 'Premium Feature';\n  let confidence = 75;\n  let email = 'unknown@example.com';\n  let subject = '';\n  let body = '';\n\n  // Try structured JSON parse first\n  let parsed;\n  try {\n    parsed = JSON.parse(messageOutput);\n\n    if (parsed.user_id) user_id = parsed.user_id;\n    if (parsed.user) user_id = parsed.user; // some use \"user\"\n    if (parsed.feature) feature = parsed.feature;\n    if (parsed.confidence) confidence = parsed.confidence;\n    if (parsed.ai_confidence) confidence = parsed.ai_confidence;\n    if (parsed.email) email = parsed.email;\n    if (parsed.recipient_email) email = parsed.recipient_email;\n    if (parsed.to) email = parsed.to.replace(/%$/, ''); // cleanup stray %\n    if (parsed.subject) subject = parsed.subject;\n    if (parsed.body) body = parsed.body;\n\n  } catch (err) {\n    // Fallback to regex parsing if JSON.parse fails\n    const userMatch = messageOutput.match(/\"user_id\":\\s*\"([^\"]+)\"/) || messageOutput.match(/\"user\":\\s*\"([^\"]+)\"/);\n    if (userMatch) user_id = userMatch[1];\n\n    const featureMatch = messageOutput.match(/\"feature\":\\s*\"([^\"]+)\"/);\n    if (featureMatch) feature = featureMatch[1];\n\n    const confMatch = messageOutput.match(/\"confidence\":\\s*(\\d+)/) || messageOutput.match(/\"ai_confidence\":\\s*(\\d+)/);\n    if (confMatch) confidence = parseInt(confMatch[1]);\n\n    const emailMatch = messageOutput.match(/\"email\":\\s*\"([^\"]+)\"/) \n                    || messageOutput.match(/\"recipient_email\":\\s*\"([^\"]+)\"/)\n                    || messageOutput.match(/\"to\":\\s*\"([^\"]+)\"/);\n    if (emailMatch) email = emailMatch[1].replace(/%$/, '');\n  }\n\n  // Build clean structured record\n  return {\n    json: {\n      opportunity_id: Math.floor(Math.random() * 1000),\n      user_id: user_id,\n      recommended_feature: feature,\n      ai_score: confidence,\n      subject_line: subject || ('Try ' + feature + ' for Better Workflow'),\n      email_message: body || ('Hi ' + user_id + '! Based on your usage patterns, ' + feature + ' could help improve your workflow efficiency.'),\n      email_to: email,\n      campaign_type: confidence > 80 ? 'high_priority' : 'standard',\n      generated_at: new Date().toISOString(),\n      campaign_status: 'ready_to_send'\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "id": "92627787-6e75-4a52-a26f-ee12e4690c65",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email_to }}",
+        "subject": "={{ $json.subject_line }}",
+        "emailType": "text",
+        "message": "={{ $json.email_message }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1616,
+        0
+      ],
+      "id": "9e14d186-a47d-465a-a425-21db772def2d",
+      "name": "Send a message",
+      "webhookId": "a327968a-9730-446e-9b13-0ce87a95536f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xrwbRzSO20DtIlWc",
+          "name": "Google email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "campaign_history",
+          "mode": "list",
+          "cachedResultName": "campaign_history"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "opportunity_id": "={{ $json.opportunity_id }}",
+            "user_id": "={{ $json.user_id }}",
+            "recommended_feature": "={{ $json.recommended_feature }}",
+            "email_message": "={{ $json.email_message }}",
+            "subject_line": "={{ $json.subject_line }}",
+            "ai_score": "={{ $json.ai_score }}",
+            "campaign_type": "={{ $json.campaign_type }}",
+            "email_to": "={{ $json.email_to }}",
+            "delivery_status": "={{ \"sent\" }}",
+            "open_count": 0,
+            "click_count": 0
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "opportunity_id",
+              "displayName": "opportunity_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recommended_feature",
+              "displayName": "recommended_feature",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject_line",
+              "displayName": "subject_line",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_message",
+              "displayName": "email_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_to",
+              "displayName": "email_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "campaign_type",
+              "displayName": "campaign_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_score",
+              "displayName": "ai_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_at",
+              "displayName": "sent_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "delivery_status",
+              "displayName": "delivery_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "open_count",
+              "displayName": "open_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "click_count",
+              "displayName": "click_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1168,
+        0
+      ],
+      "id": "94e199e7-8dda-45df-b4e1-d8f80bdce696",
+      "name": "Insert rows in a table",
+      "credentials": {
+        "postgres": {
+          "id": "wLmBYCnBAUkuxtuo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    user_id,\n    recommended_feature,\n    subject_line,\n    email_message,\n    email_to\nFROM campaign_history \nORDER BY sent_at DESC \nLIMIT 5;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1376,
+        0
+      ],
+      "id": "5b6e6bb9-8146-4cdf-a50f-2b2ba3dc612b",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "wLmBYCnBAUkuxtuo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2efa748c-587a-40d0-b816-0ece7852b531",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3c8daa181864bab9813d541ea196b92417e36352090688fe87d43fbda3d870e6"
+  },
+  "id": "WlLbJgtqLsIH7zhj",
+  "tags": []
+}

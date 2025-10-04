@@ -1,0 +1,333 @@
+{
+  "name": "02_Opportunity_Detection",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "34b5d36a-2397-4924-885a-7e8efa53577a",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  user_id,\n  feature_used,\n  email,\n  COUNT(*) AS usage_frequency,\n  plan_type,\n  MAX(timestamp) AS last_activity,\n  AVG(usage_count) AS avg_usage_per_session,\n  STRING_AGG(DISTINCT session_id, ', ') AS pages_visited\nFROM user_activities \nWHERE timestamp >= NOW() - INTERVAL '6 hours'\n  AND usage_count >= 3\nGROUP BY user_id, feature_used, email, plan_type\nHAVING COUNT(*) >= 1\nORDER BY usage_frequency DESC, avg_usage_per_session DESC\nLIMIT 5;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        160,
+        0
+      ],
+      "id": "e7e80468-b59b-4ca3-9d42-970cf7703da1",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "wLmBYCnBAUkuxtuo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-20b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        288,
+        160
+      ],
+      "id": "25126ca5-8270-4fff-96d6-9dcf08f0d443",
+      "name": "OpenRouter Chat Model",
+      "notesInFlow": true,
+      "credentials": {
+        "openRouterApi": {
+          "id": "d0erYHXBGLDNJQZn",
+          "name": "OpenRouter account"
+        }
+      },
+      "notes": "You are a SaaS upsell expert analyzing user behavior patterns. \n\nAnalyze the user activity data and identify premium features that would solve their workflow inefficiencies.\n\nReturn ONLY valid JSON in this format:\n{\n  \"confidence_score\": number (0-100),\n  \"recommended_feature\": \"specific premium feature name\",\n  \"user_pain_point\": \"workflow inefficiency they're experiencing\",\n  \"solution_message\": \"personalized 40-word suggestion that feels helpful, not sales-y\",\n  \"timing\": \"immediate\",\n  \"upsell_type\": \"workflow_optimization\"\n}\n\nFocus on workflow improvements, not generic upgrades.\n"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a SaaS upsell expert analyzing user behavior patterns.\n\nAnalyze user activity data and identify premium features that would solve workflow inefficiencies.\n\nYour task:\n1. Analyze the user's behavior pattern\n2. Identify their main workflow inefficiency  \n3. Recommend a specific premium feature\n4. Create a helpful, non-sales-y suggestion message\n\nCRITICAL: You MUST include ALL original user data in your response along with your analysis.\n\nReturn your analysis in this COMPLETE JSON format:\n{\n  \"user_id\": \"[COPY EXACT user_id from input]\",\n  \"feature_used\": \"[COPY EXACT feature_used from input]\", \n  \"usage_frequency\": \"[COPY EXACT usage_frequency from input]\",\n  \"plan_type\": \"[COPY EXACT plan_type from input]\",\n  \"last_activity\": \"[COPY EXACT last_activity from input]\",\n  \"avg_usage_per_session\": \"[COPY EXACT avg_usage_per_session from input]\",\n  \"pages_visited\": \"[COPY EXACT pages_visited from input]\",\n  \"confidence_score\": number (0-100),\n  \"recommended_feature\": \"specific premium feature name\",\n  \"user_pain_point\": \"workflow inefficiency they're experiencing\",\n  \"solution_message\": \"personalized 40-word suggestion that feels helpful\",\n  \"timing\": \"immediate\",\n  \"upsell_type\": \"workflow_optimization\",\n  \"analysis_timestamp\": \"[current timestamp]\"\n}\n\nIMPORTANT: Do NOT lose any original user data. Copy all input fields exactly as provided, then add your AI analysis fields.\n\nFocus on genuine workflow improvements, not generic upgrades.\n\n\n\ncurrent data : {\n  \"user_id\":{{ $json.user_id }},\n  \"feature_used\":{{ $json.feature_used }}, \n  \"usage_frequency\":{{ $json.usage_frequency }},\n  \"plan_type\":{{ $json.plan_type }},\n  \"last_activity\": {{ $json.last_activity }},\n  \"avg_usage_per_session\":{{ $json.avg_usage_per_session }},\n  \"pages_visited\": {{ $json.pages_visited }},\n  \"email\": {{ $json.email }}\n}\n\nemail is maditory ",
+        "hasOutputParser": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        336,
+        0
+      ],
+      "id": "59268485-ddd0-482a-919c-0b3c71fc1567",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process the excellent AI output\nreturn items.map(item => {\n  let aiOutput = item.json.output;\n\n  // Clean any markdown formatting like ```json ... ```\n  if (aiOutput.includes('```json')) {\n    aiOutput = aiOutput\n      .replace(/```json\\n?/g, '')  // remove opening fence\n      .replace(/```\\n?/g, '');     // remove closing fence\n  }\n\n  // Parse the AI analysis safely\n  let aiAnalysis;\n  try {\n    aiAnalysis = JSON.parse(aiOutput);\n  } catch (error) {\n    console.log('Parse error:', error, aiOutput);\n    return null; // Skip problematic items\n  }\n\n  // Return perfectly structured data for PostgreSQL\n  return {\n    json: {\n      // User Data (from AI output)\n      user_id: aiAnalysis.user_id,\n      feature_used: aiAnalysis.feature_used,\n      usage_frequency: aiAnalysis.usage_frequency,\n      plan_type: aiAnalysis.plan_type,\n      email: aiAnalysis.email,   // <-- safe email mapping\n\n      // AI Analysis\n      ai_confidence: aiAnalysis.confidence_score,\n      recommended_feature: aiAnalysis.recommended_feature,\n      pain_point: aiAnalysis.user_pain_point,\n      personalized_message: aiAnalysis.solution_message,\n      timing: aiAnalysis.timing,\n\n      // Metadata\n      analysis_timestamp: new Date().toISOString(),\n      priority_level: aiAnalysis.confidence_score > 75 ? 'high' : 'medium',\n      ready_for_campaign: true\n    }\n  };\n}).filter(item => item !== null); // Remove any failed parses\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "39105748-fff5-4dd3-baa9-bd6f9e2d9fd9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ccb325e8-8f1a-46b3-97fe-f626ac15dcc4",
+              "leftValue": "={{ $json.ai_confidence }}",
+              "rightValue": 60,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        864,
+        0
+      ],
+      "id": "f38e64d1-1ef7-4718-89cd-5731aef865f9",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "upsell_opportunities",
+          "mode": "list",
+          "cachedResultName": "upsell_opportunities"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ai_score": "={{ $json.ai_confidence }}",
+            "recommended_feature": "={{ $json.recommended_feature }}",
+            "user_id": "={{ $json.user_id }}",
+            "created_at": "={{ $json.analysis_timestamp }}",
+            "reasoning": "={{ $json.pain_point }}",
+            "status": "={{ $json.ready_for_campaign }}",
+            "email": "={{ $json.email }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_score",
+              "displayName": "ai_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recommended_feature",
+              "displayName": "recommended_feature",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reasoning",
+              "displayName": "reasoning",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1120,
+        -16
+      ],
+      "id": "ecf41577-8d6b-4d16-841f-d3f76cffc703",
+      "name": "Insert rows in a table",
+      "credentials": {
+        "postgres": {
+          "id": "wLmBYCnBAUkuxtuo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "acbd8b27-0448-4b42-a55c-6496548d61c0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3c8daa181864bab9813d541ea196b92417e36352090688fe87d43fbda3d870e6"
+  },
+  "id": "KQ3z4ZF989qG2li1",
+  "tags": []
+}

@@ -1,0 +1,268 @@
+{
+  "name": "01_Activity_Ingestion_AI",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook/user-activity",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "b3831b84-9802-4ff7-94b8-894c2f7bf687",
+      "name": "Webhook",
+      "webhookId": "0588d5d4-fba9-4418-bff2-4514b2435a77"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle nested body structure from webhook\nconst activity = $input.first().json.body;  // Directly access body\nreturn [\n  {\n    json: {\n      user_id: activity.user_id,\n      feature_used: activity.feature,        // Map 'feature' to 'feature_used'\n      timestamp: new Date().toISOString(),\n      email : activity.email,\n      usage_count: parseInt(activity.usage_count) || 1,\n      plan_type: activity.plan_type || 'basic',\n      session_id: activity.session_id || 'unknown',  // safer than metadata.page\n      // Additional metadata\n      page_visited: activity.metadata?.page || null,\n      raw_metadata: activity.metadata || {}\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "38bb812c-0554-4009-9c86-3ebb01285a89",
+      "name": " Smart Data Validation"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8c2eb50b-6956-4805-b92e-c7d09673dcd6",
+              "leftValue": "={{ $json.usage_count }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "6fde3aad-fbce-4715-b1c1-5f7e4f168331",
+              "leftValue": "={{ $json.plan_type }}",
+              "rightValue": "={{ \"basic\" }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "0e0ca43b-88e3-4db7-8ed1-4283298897c3",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "url": "https://jsonplaceholder.typicode.com/users/1",
+        "authentication": "genericCredentialType",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        -272
+      ],
+      "id": "7a8acc80-8159-44f8-96b5-07db7f5b518f",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "user_activities",
+          "mode": "list",
+          "cachedResultName": "user_activities"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $json.user_id }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "usage_count": "={{ $json.usage_count }}",
+            "session_id": "={{ $json.session_id }}",
+            "plan_type": "={{ $json.plan_type }}",
+            "feature_used": "={{ $json.feature_used }}",
+            "email": "={{ $json.email}}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "feature_used",
+              "displayName": "feature_used",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "usage_count",
+              "displayName": "usage_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "plan_type",
+              "displayName": "plan_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        448,
+        0
+      ],
+      "id": "a4b46c1c-2308-459c-ae29-0f09464e1aa4",
+      "name": "Insert rows in a table",
+      "credentials": {
+        "postgres": {
+          "id": "wLmBYCnBAUkuxtuo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": " Smart Data Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    " Smart Data Validation": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        []
+      ]
+    },
+    "Insert rows in a table": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "302770c8-1f3b-416f-9051-4fd8e33e9759",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "3c8daa181864bab9813d541ea196b92417e36352090688fe87d43fbda3d870e6"
+  },
+  "id": "VNMjxIbhaXWL4CfG",
+  "tags": []
+}
